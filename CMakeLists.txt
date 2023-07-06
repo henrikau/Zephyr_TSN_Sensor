@@ -5,4 +5,4 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(avb_sensor_node)
 
-target_sources(app PRIVATE src/main.c src/common.c src/gyro.c src/accel.c)
+target_sources(app PRIVATE src/main.c src/common.c src/gyro.c src/accel.c src/network.c src/avtp.c src/avtp_stream.c)
