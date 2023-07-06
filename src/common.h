@@ -17,6 +17,17 @@ struct avb_sensor_data {
 	uint64_t gyro_ts;
 };
 
+/* Sensor values to send to remote over AVB stream */
+struct sensor_set {
+	int64_t magn[3];
+	int64_t gyro[3];
+	int64_t accel[3];
+	int64_t temp;
+	uint64_t gyro_ts_ns;
+	uint64_t accel_ts_ns;
+	uint64_t sent_ts_ns;
+};
+
 int data_init(struct avb_sensor_data *d, int timeout_us);
 int data_get(struct avb_sensor_data *d);
 int data_put(struct avb_sensor_data *d);
@@ -27,6 +38,43 @@ void gptp_init(void);
 int gyro_init(struct avb_sensor_data *sensor_data);
 void gyro_collector(void);
 
-
 int accel_init(struct avb_sensor_data *sensor_data);
 void accel_collector(void);
+
+/* Initialize the network, set addresses, ready CBS credit calculation
+ * etc.
+ *
+ * sensor_data: containing struct for data. We expect the data to be
+ * updated asynhcronously and will send whatever's in the buffer when
+ * CBS allows us to
+ *
+ * tx_interval: Target interval. This is used as input to the CBS
+ * machinery to compute the correct idleSlope which in turn will send
+ * data at the desired rate.
+ */
+int network_init(struct avb_sensor_data *sensor_data, int tx_interval_ns);
+
+/* Worker sending data from as quickly as CBS will allow it to.
+ *
+ * The design hinges on a single sender (this thread) sending sensor
+ * data of a known size. It does not currently support multiple outgoing
+ * streams.
+ */
+void network_sender(void);
+
+/* Low-pri worker that drains the Rx buffer of a socket.
+ *
+ * This is a know bug found by Einar, that when gPTP runs, it places the
+ * iface in promiscous mode, and the gPTP driver does not properly drain
+ * the incming packages, resulting in overflowing buffers.
+ *
+ * [00:12:17.839,000] <err> net_pkt: Data buffer (68) allocation failed.
+ *
+ */
+void network_rx_drain(void);
+
+/* Worker that periodically refills the credits. Once credits reaches >=
+ * 0, potential waiters are signalled.
+ */
+void network_cbs_refill(void);
+
