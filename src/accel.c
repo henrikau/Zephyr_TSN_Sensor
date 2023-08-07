@@ -75,6 +75,7 @@ void accel_collector(void)
 			sensor_channel_get(dev_a, SENSOR_CHAN_MAGN_XYZ, &_data->magn[0]);
 			sensor_channel_get(dev_a, SENSOR_CHAN_DIE_TEMP, &_data->temp);
 			_data->accel_ts = ts;
+			_data->accel_ctr++;
 			data_put(_data);
 		}
 	}

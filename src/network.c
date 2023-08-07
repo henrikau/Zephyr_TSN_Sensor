@@ -127,6 +127,20 @@ int pdu_add_data(struct avb_sensor_data *data, struct avtp_stream_pdu *pdu)
 		return -EINVAL;;
 
 	if (data_get(data) == 0) {
+
+		/*
+		 * if (!(data->accel_ctr == 1 && data->gyro_ctr == 1)) :
+		 *
+		 * We are not completely in synch with polling
+		 * Either we:
+		 *  - overproduce (ctr > 1)
+		 *  - underproduce (ctr == 0)
+		 *
+		 * For now, let the receiver handle this and send data
+		 * packets at the defined rate.
+		 *
+		 */
+
 		struct sensor_set *set = (struct sensor_set *)pdu->avtp_payload;
 		/* all values are in micro-units */
 		for (int i = 0; i < 3; i++) {

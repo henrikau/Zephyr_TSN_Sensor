@@ -11,10 +11,12 @@ struct avb_sensor_data {
 	struct sensor_value magn[3];
 	struct sensor_value temp;
 	uint64_t accel_ts;
+	uint64_t accel_ctr;
 
 	/* GYRO is read from another device */
 	struct sensor_value gyro[3];
 	uint64_t gyro_ts;
+	uint64_t gyro_ctr;
 };
 
 /* Sensor values to send to remote over AVB stream */

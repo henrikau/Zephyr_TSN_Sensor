@@ -60,6 +60,7 @@ void gyro_collector(void)
 		data_get(_data);
 		sensor_channel_get(dev_g, SENSOR_CHAN_GYRO_XYZ, &_data->gyro[0]);
 		_data->gyro_ts = ts;
+		_data->gyro_ctr++;
 		data_put(_data);
 	}
 }
