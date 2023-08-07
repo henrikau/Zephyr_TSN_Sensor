@@ -120,6 +120,19 @@ int cbs_credit_put(int sz)
 	return -EBUSY;
 }
 
+static void clear_data(struct avb_sensor_data *data)
+{
+	if (!data)
+		return;
+	memset(data->accel, 0, 3 * sizeof(struct sensor_value));
+	memset(data->gyro , 0, 3 * sizeof(struct sensor_value));
+	memset(data->magn , 0, 3 * sizeof(struct sensor_value));
+	memset(&data->temp , 0,     sizeof(struct sensor_value));
+	data->accel_ts = 0;
+	data->accel_ctr = 0;
+	data->gyro_ts = 0;
+	data->gyro_ctr = 0;
+}
 
 int pdu_add_data(struct avb_sensor_data *data, struct avtp_stream_pdu *pdu)
 {
@@ -153,6 +166,12 @@ int pdu_add_data(struct avb_sensor_data *data, struct avtp_stream_pdu *pdu)
 		/* Copy capture timestamps */
 		set->gyro_ts_ns = data->gyro_ts;
 		set->accel_ts_ns = data->accel_ts;
+
+		/* Avoid sending data more than once (essential part of
+		 * a time-triggered architecture)
+		 */
+		clear_data(data);
+
 		data_put(data);
 		return sizeof(*set);
 	}
