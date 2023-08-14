@@ -9,18 +9,39 @@
 #include "avtp_stream.h"
 
 #include <stdio.h>		/* printf() */
-
+#define PREAMBLE_SZ		7
+#define SFD_SZ			1
+#define CRC_SZ			4
+#define IPG_SZ			12
+#define L1_SZ			(PREAMBLE_SZ + SFD_SZ + CRC_SZ + IPG_SZ)
+#define L2_SZ			14
+#define VLAN_SZ			 4
 #define DATA_LEN		sizeof(struct sensor_set)
 #define PDU_SIZE		(sizeof(struct avtp_stream_pdu) + DATA_LEN)
 #define STREAM_ID		42
 
+struct net_info {
+	/* iface related fields
+	 */
+	int max_mtu;
+	int portTxRate;
+	int queue;
+	int credit;
 
-/*
- * Reference to sensor data. The collector-threads will feed data into
- * this whenever their sensor is ready. When we can transmit, we reserve
- * this, copy out data and send.
- */
-static struct avb_sensor_data *_data;
+	int idleSlope;
+	int maxFrameSize;
+	int sendSlope;
+	int loCredit;
+
+	/*
+	 * Reference to sensor data. The collector-threads will feed data into
+	 * this whenever their sensor is ready. When we can transmit, we reserve
+	 * this, copy out data and send.
+	 */
+	struct avb_sensor_data *data;
+};
+static struct net_info ninfo = {0};
+
 
 /* cbs_can_tx
  * We use this to signal that credits are available.
@@ -44,19 +65,9 @@ static struct k_timer cbs_timer;
 void cbs_timeout(struct k_timer *timer_id) {
 	k_sem_give(&cbs_timer_sem);
 }
+
 void network_cbs_refill(void)
 {
-	/* FIXME Use these values (alongsize tx_interval) to find the
-	 * correct idleSlope
-	 */
-#if 0
-	int portTransmitRate = 100000000;	//bits per second on port
-	int idleSlope = 1920;			//bits per second used by avtp
-	int sendSlope = idleSlope - portTransmitRate;
-	bool transmit = false;
-#endif
-	int credit = 0;
-
 	/*
 	 * Run periodically at X Hz (find this in .1BA/.1Q#L
 	 * FIXME: add a timer (prematurely) stopped callback
@@ -67,17 +78,17 @@ void network_cbs_refill(void)
 	 * This is *not* the correct way.
 	 */
 	k_timer_init(&cbs_timer, cbs_timeout, NULL);
-	k_timer_start(&cbs_timer, K_USEC(250), K_MSEC(10));
+	k_timer_start(&cbs_timer, K_USEC(250), K_USEC(11061));
 
 	while (1) {
 		/* 1. Replenish credit, adjust for timer being late */
 		k_sem_take(&cbs_credit_lock, K_FOREVER);
-		if (credit < 0) {
+		if (ninfo.credit < 0) {
 			// credit += 4800; //12500 bits per interrupt x 1920 / 100000000 (x10000)
-			credit += DATA_LEN;
+			ninfo.credit += DATA_LEN;
 		}
 
-		if(credit >= 0) {
+		if(ninfo.credit >= 0) {
 			//credit -= 599988; //60 bits to send x sendSlope / 100000000 (x10000)
 
 			/* From Einar's code, why? */
@@ -104,7 +115,12 @@ void network_cbs_refill(void)
  */
 int cbs_credit_get(void)
 {
-	return k_sem_take(&cbs_can_tx, K_FOREVER);
+	if (k_sem_take(&cbs_credit_lock, K_FOREVER) == 0) {
+		ninfo.queue++;
+		k_sem_give(&cbs_credit_lock);
+		return k_sem_take(&cbs_can_tx, K_FOREVER);
+	}
+	return -EBUSY;
 }
 
 /* Decrement the credit with the consumed size of the transmitted
@@ -113,7 +129,12 @@ int cbs_credit_get(void)
 int cbs_credit_put(int sz)
 {
 	if (k_sem_take(&cbs_credit_lock, K_FOREVER) == 0) {
-		/* reduce credit with transmitted data */
+		/* We have sent, less pressure on the queue */
+		ninfo.queue--;
+
+		/* reduce credit with transmitted data
+		 * data size + avtp headers (PDU_SIZE), ethernet headers, IPG etc
+		 */
 		k_sem_give(&cbs_credit_lock);
 		return 0;
 	}
@@ -180,13 +201,62 @@ int pdu_add_data(struct avb_sensor_data *data, struct avtp_stream_pdu *pdu)
 	return -EBUSY;
 }
 
-
-int network_init(struct avb_sensor_data *sensor_data, int tx_interval)
+void gather_net_info(struct net_if *iface, void *user_data)
 {
+	struct net_info *info = (struct net_info *)user_data;
+	if (iface->if_dev->mtu > info->max_mtu)
+		info->max_mtu = iface->if_dev->mtu;
+}
 
+int network_init(struct avb_sensor_data *sensor_data, int tx_interval_ns)
+{
 	if (!sensor_data)
 		return -EINVAL;
-	_data = sensor_data;
+	memset(&ninfo, 0, sizeof(ninfo));
+	ninfo.data = sensor_data;
+
+	/* FIXME Use these values (alongsize tx_interval) to find the
+	 * correct idleSlope
+	 */
+	ninfo.portTxRate = 100000000; /* bps */
+
+	/* Find total size, including headers and L1 overhead */
+	int frame_sz = (PDU_SIZE + L2_SZ + VLAN_SZ + L1_SZ)*8;
+	int frames_sec = 1e9/tx_interval_ns;
+
+	printf("Send %zd octets (%d bytes) %d times/sec\n", frame_sz, frame_sz / 8, frames_sec);
+
+	/* refill bps */
+	ninfo.idleSlope =  frame_sz * frames_sec;
+	printf("  idleSlope=%d\n", ninfo.idleSlope);
+
+	ninfo.maxFrameSize = frame_sz;
+	printf("  maxFrameSize=%d\n", ninfo.maxFrameSize);
+
+
+	ninfo.sendSlope = ninfo.idleSlope - ninfo.portTxRate;
+	printf("  sendSlope=%d\n", ninfo.sendSlope);
+
+	ninfo.loCredit = ninfo.maxFrameSize * ninfo.sendSlope / ninfo.portTxRate;
+	printf("  loCredit=%d\n", ninfo.loCredit);
+
+
+#if 0
+	int portTransmitRate = 100000000;	//bits per second on port
+	int idleSlope = 1920;			//bits per second used by avtp
+	int sendSlope = idleSlope - portTransmitRate;
+	bool transmit = false;
+#endif
+
+
+
+	/* 1. Find port rate (portTransmitRate) and max MTU*/
+	net_if_foreach(gather_net_info, &ninfo);
+
+	/* Find idleSlope based on tx_interval and portTxRate */
+	/* 2. Determine total size pr. frame */
+	/* 3. Derive required idleSlope */
+	/* 4.  */
 
 	/* Init network */
 	return 0;
@@ -195,7 +265,6 @@ int network_init(struct avb_sensor_data *sensor_data, int tx_interval)
 void network_sender(void)
 {
 	uint8_t seq_num = 0;
-
 	int avb_socket = zsock_socket(AF_PACKET, SOCK_DGRAM, 0x22f0);
 	if (avb_socket < 0) {
 		printk("Cannot create socket\n%i\n", avb_socket);
@@ -213,6 +282,7 @@ void network_sender(void)
 	addr.sll_halen = sizeof("xx:xx:xx:xx:xx:xx");
 	memcpy(addr.sll_addr, ether_mcast_addr, sizeof(ether_mcast_addr));
 
+
 	struct avtp_stream_pdu *pdu = alloca(PDU_SIZE);
 	avtp_stream_pdu_init(pdu);
 	char drain_buffer[1500];
@@ -222,7 +292,7 @@ void network_sender(void)
 		cbs_credit_get();
 
 		/* 2. Collect data from _data */
-		int sz = pdu_add_data(_data, pdu);
+		int sz = pdu_add_data(ninfo.data, pdu);
 		if (sz == DATA_LEN) {
 
 			/* 3. Construct rest of PDU */
