@@ -19,7 +19,9 @@ struct avb_sensor_data {
 	uint64_t gyro_ctr;
 };
 
-/* Sensor values to send to remote over AVB stream */
+/*
+ * Sensor value payload
+ */
 struct sensor_set {
 	int64_t magn[3];
 	int64_t gyro[3];
@@ -28,7 +30,7 @@ struct sensor_set {
 	uint64_t gyro_ts_ns;
 	uint64_t accel_ts_ns;
 	uint64_t sent_ts_ns;
-};
+} __attribute__((packed));
 
 int data_init(struct avb_sensor_data *d, int timeout_us);
 int data_get(struct avb_sensor_data *d);
