@@ -307,6 +307,7 @@ void network_sender(void)
 			avtp_stream_pdu_set(pdu, AVTP_STREAM_FIELD_TIMESTAMP, avtptime);
 
 			/* 4. Transmit data  */
+			((struct sensor_set *)pdu->avtp_payload)->sent_ts_ns = gptp_ts();
 			zsock_sendto(avb_socket, pdu, PDU_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
 			seq_num++;
 
