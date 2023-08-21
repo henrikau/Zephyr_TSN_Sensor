@@ -49,11 +49,12 @@ int gyro_init(struct avb_sensor_data *sensor_data)
 
 void gyro_collector(void)
 {
+	/* Wait for gyro_init() to complete */
 	do {
 		k_sleep(K_SECONDS(1));
 	} while (!valid);
 
-	while (valid) {
+	while (valid && data_valid(_data)) {
 		k_sem_take(&sem_g, K_FOREVER);
 		uint64_t ts = gptp_ts();
 
@@ -63,4 +64,5 @@ void gyro_collector(void)
 		_data->gyro_ctr++;
 		data_put(_data);
 	}
+	printf("[GYRO] Closing down gyro-collector.\n");
 }

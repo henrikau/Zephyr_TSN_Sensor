@@ -161,7 +161,16 @@ int pdu_add_data(struct avb_sensor_data *data, struct avtp_stream_pdu *pdu)
 		return -EINVAL;;
 
 	if (data_get(data) == 0) {
-
+		if (!data->running) {
+			/* We are no longer running */
+			data_put(data);
+			return -EIO;
+		}
+		else if (!data->ready) {
+			/* data not yet ready (still in startup) */
+			data_put(data);
+			return -ENODATA;
+		}
 		/*
 		 * if (!(data->accel_ctr == 1 && data->gyro_ctr == 1)) :
 		 *
@@ -214,7 +223,7 @@ int network_init(struct avb_sensor_data *sensor_data, int tx_interval_ns)
 		return -EINVAL;
 	memset(&ninfo, 0, sizeof(ninfo));
 	ninfo.data = sensor_data;
-
+	
 	/* FIXME Use these values (alongsize tx_interval) to find the
 	 * correct idleSlope
 	 */
@@ -264,10 +273,15 @@ int network_init(struct avb_sensor_data *sensor_data, int tx_interval_ns)
 
 void network_sender(void)
 {
+	/* Wait for network_init() to be called, i.e. setting ->data */
+	do {
+		k_sleep(K_MSEC(100));
+	} while (ninfo.data == NULL);
+
 	uint8_t seq_num = 0;
 	int avb_socket = zsock_socket(AF_PACKET, SOCK_DGRAM, 0x22f0);
 	if (avb_socket < 0) {
-		printk("Cannot create socket\n%i\n", avb_socket);
+		printf("[NETWORK] Cannot create socket (%d), aborting\n", avb_socket);
 		return;
 	}
 
@@ -287,7 +301,14 @@ void network_sender(void)
 	avtp_stream_pdu_init(pdu);
 	char drain_buffer[1500];
 
-	while (1) {
+	/* Wait for data to become ready, max 30 sec */
+	int ret = data_wait_ready(ninfo.data, 30000);
+	if (ret < 0) {
+		printf("[NETWORK] Data not available (%d), aborting Tx-thread after 30 sec timeout.\n", ret);
+		return;
+	}
+
+	while (data_valid(ninfo.data)) {
 		/* 1. Block until we have 0 or positive credit */
 		cbs_credit_get();
 
@@ -328,9 +349,11 @@ void network_sender(void)
 				res = recv(avb_socket, drain_buffer, sizeof(drain_buffer), MSG_DONTWAIT);
 			} while (res > 0);
 		}
-		/* 5. Signal CBS thread that data has been consumed */
-		cbs_credit_put(sz > 0 ? sz : 0);
 
-		/* 6. Goto #1 */
+		/* 5. Signal CBS thread that  data has been consumed (or
+		 * nothing if sending failed.
+		 */
+		cbs_credit_put(sz > 0 ? sz : 0);
 	}
+	printf("[NETWORK] Closing down sender.\n");
 }

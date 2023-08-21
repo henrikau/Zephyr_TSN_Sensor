@@ -54,6 +54,40 @@ int data_put(struct avb_sensor_data *data)
 	return k_mutex_unlock(&data->lock);
 }
 
+int data_wait_ready(struct avb_sensor_data *data, int timeout_ms)
+{
+	int wait_ms = 0;
+	bool ready = false;
+
+	if (!data)
+		return -EINVAL;
+
+	do {
+		if (data_get(data) == 0) {
+			ready = data->ready;
+			data_put(data);
+		}
+		k_sleep(K_MSEC(50));
+		wait_ms += 50;
+		if (wait_ms > timeout_ms)
+			return -ETIMEDOUT;
+	} while (!ready);
+
+	return 0;
+}
+
+bool data_valid(struct avb_sensor_data *data)
+{
+	if (!data)
+		return false;
+
+	bool valid = false;
+	if (data_get(data) == 0) {
+		valid = data->running;
+		data_put(data);
+	}
+	return valid;
+}
 
 /* Copied from zephyr/samples/net/gptp/src/main.c */
 #include <zephyr/net/gptp.h>

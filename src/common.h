@@ -6,6 +6,10 @@ struct avb_sensor_data {
 	struct k_mutex lock;
 	k_timeout_t timeout;
 
+	/* System flag to indicate if we are running and ready to start */
+	bool ready;
+	bool running;
+
 	/* Accel, magnetometer & temp from once device */
 	struct sensor_value accel[3];
 	struct sensor_value magn[3];
@@ -35,6 +39,19 @@ struct sensor_set {
 int data_init(struct avb_sensor_data *d, int timeout_us);
 int data_get(struct avb_sensor_data *d);
 int data_put(struct avb_sensor_data *d);
+
+/* Wait for data to become available.
+ * Needed at:
+ *    - startup, when sensor setup is still running
+ *    - error, if one or more of the sensors are unavailable.
+ */
+int data_wait_ready(struct avb_sensor_data *data, int timeout_ms);
+
+/* If system becomes invalid, indicates to threads that they should close down.
+ *
+ * If data is invalid, cannot continue.
+ */
+bool data_valid(struct avb_sensor_data *data);
 
 uint64_t gptp_ts(void);
 void gptp_init(void);
