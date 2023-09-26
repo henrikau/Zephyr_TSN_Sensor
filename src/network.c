@@ -208,7 +208,9 @@ void gather_net_info(struct net_if *iface, void *user_data)
 		info->max_mtu = iface->if_dev->mtu;
 }
 
-int network_init(struct avb_sensor_data *sensor_data, int tx_interval_ns)
+int network_init(struct avb_sensor_data *sensor_data,
+		uint64_t tx_interval_ns,
+		enum avb_stream_class sc)
 {
 	if (!sensor_data)
 		return -EINVAL;

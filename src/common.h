@@ -1,6 +1,10 @@
 #pragma once
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/sensor.h>
+enum avb_stream_class {
+	CLASS_A = 8000,		/* 125us - 8kHz */
+	CLASS_B = 4000		/* 250us - 4kHz */
+};
 
 struct avb_sensor_data {
 	struct k_mutex lock;
@@ -45,7 +49,9 @@ void gyro_collector(void);
 int accel_init(struct avb_sensor_data *sensor_data);
 void accel_collector(void);
 
-/* Initialize the network, set addresses, ready CBS credit calculation
+/* We are currently sending *a single stream*
+ *
+ * Initialize the network, set addresses, ready CBS credit calculation
  * etc.
  *
  * sensor_data: containing struct for data. We expect the data to be
@@ -56,7 +62,9 @@ void accel_collector(void);
  * machinery to compute the correct idleSlope which in turn will send
  * data at the desired rate.
  */
-int network_init(struct avb_sensor_data *sensor_data, int tx_interval_ns);
+int network_init(struct avb_sensor_data *sensor_data,
+		uint64_t tx_interval_ns,
+		enum avb_stream_class sc);
 
 /* Worker sending data from as quickly as CBS will allow it to.
  *
