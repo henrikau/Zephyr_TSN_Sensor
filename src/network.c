@@ -24,14 +24,18 @@ struct net_info {
 	/* iface related fields
 	 */
 	int max_mtu;
-	int portTxRate;
+	uint64_t portTxRate;
 	int queue;
 	int credit;
 
-	int idleSlope;
+	/* CBS Settings */
+	enum avb_stream_class sc;
+	int64_t idleSlope;
+	int64_t sendSlope;
 	int maxFrameSize;
-	int sendSlope;
-	int loCredit;
+	int64_t loCredit;
+	int64_t hiCredit;
+	uint64_t tx_interval_ns;
 
 	/*
 	 * Reference to sensor data. The collector-threads will feed data into
@@ -66,6 +70,13 @@ void cbs_timeout(struct k_timer *timer_id) {
 	k_sem_give(&cbs_timer_sem);
 }
 
+/* Dedicated worker that periodically refills the Tx-credit.
+ *
+ * As we do not have HW assisted CBS, this this is done in SW and to
+ * reduce the overhead, the interval is higher than the observation
+ * interval for both class A and B.
+ *
+ */
 void network_cbs_refill(void)
 {
 	/*
@@ -78,25 +89,48 @@ void network_cbs_refill(void)
 	 * This is *not* the correct way.
 	 */
 	k_timer_init(&cbs_timer, cbs_timeout, NULL);
-	k_timer_start(&cbs_timer, K_USEC(250), K_USEC(11061));
 
+	/* As a start, refil at 100Hz */
+	k_timer_start(&cbs_timer, K_USEC(250), K_USEC(10000));
+
+	uint64_t ts_prev = gptp_ts();
 	while (1) {
-		/* 1. Replenish credit, adjust for timer being late */
+		/* 1. Replenish credit, adjust for timer being late
+		 *
+		 * In 802.1Q, idleSlope is used to describe the rate of
+		 * replensihing credits for a particular Stream
+		 * Class. Class A expects to transmit frames every 125us
+		 * (8kHz), B at 4kHz.
+		 *
+		 * This does not scale particularly well to a SW-only
+		 * approach, so we need network_init() to have
+		 * calculated idleSlope appropriately.
+		 */
 		k_sem_take(&cbs_credit_lock, K_FOREVER);
-		if (ninfo.credit < 0) {
-			// credit += 4800; //12500 bits per interrupt x 1920 / 100000000 (x10000)
-			ninfo.credit += DATA_LEN;
-		}
+		uint64_t ts_now = gptp_ts();
 
+		/* Given the rate of refill (idleSlope), refill
+		 * according to time spent since last refill. This
+		 * should scale regardless of cbs_timer
+		 */
+		uint64_t dt_ns = ts_now - ts_prev;
+		int64_t d_credits = (ninfo.idleSlope * dt_ns) / 1e9;
+
+		/* If we're below, we increment regardless of queue */
+		if (ninfo.credit < 0)
+			ninfo.credit += d_credits;
+
+		/* 2. notify waiters */
 		if(ninfo.credit >= 0) {
-			//credit -= 599988; //60 bits to send x sendSlope / 100000000 (x10000)
-
-			/* From Einar's code, why? */
-			// credit -= 600000; //make up for not pausing timer
-
-			/* 2. notify waiters */
-			k_sem_give(&cbs_can_tx);
+			if (ninfo.queue > 0) {
+				k_sem_give(&cbs_can_tx);
+			} else {
+				/* no waiters, release excess credits */
+				ninfo.credit = 0;
+			}
 		}
+
+		ts_prev = ts_now;
 		k_sem_give(&cbs_credit_lock);
 
 		/* 3. Wait for timer and goto #1*/
@@ -116,6 +150,7 @@ void network_cbs_refill(void)
 int cbs_credit_get(void)
 {
 	if (k_sem_take(&cbs_credit_lock, K_FOREVER) == 0) {
+		/* FIXME: we increment queue, but we need to know the time at wich */
 		ninfo.queue++;
 		k_sem_give(&cbs_credit_lock);
 		return k_sem_take(&cbs_can_tx, K_FOREVER);
