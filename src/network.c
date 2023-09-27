@@ -161,15 +161,22 @@ int cbs_credit_get(void)
 /* Decrement the credit with the consumed size of the transmitted
  * data. The functino will also release the 'credit-lock'
  */
-int cbs_credit_put(int sz)
+int cbs_credit_put(int payload_sz)
 {
 	if (k_sem_take(&cbs_credit_lock, K_FOREVER) == 0) {
 		/* We have sent, less pressure on the queue */
 		ninfo.queue--;
 
 		/* reduce credit with transmitted data
-		 * data size + avtp headers (PDU_SIZE), ethernet headers, IPG etc
+		 *
+		 * data size + avtp headers (PDU_SIZE), ethernet
+		 * headers, IPG etc.
+		 *
+		 * Credits are in bits
 		 */
+		int tx_sz = payload_sz + sizeof(struct avtp_stream_pdu) + L1_SZ + L2_SZ + VLAN_SZ;
+		ninfo.credit -= tx_sz*8;
+
 		k_sem_give(&cbs_credit_lock);
 		return 0;
 	}
