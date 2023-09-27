@@ -16,6 +16,10 @@ int main(void)
 		startup_err = true;
 	}
 
+	/* System is running, but data-capture is not yet ready  */
+	data->running = true;
+	data->ready = false;
+
 	/* ------------------------------------------------------
 	 * FXAS21002 - Gyro
 	 * Collector runs in own thread waiting for gyro_init() to be called
@@ -44,14 +48,18 @@ int main(void)
 		startup_err = true;
 	}
 
-
 	if (startup_err) {
 		printf("Startup errors exists, aborting..\n");
+
+		/* Signal all threads to pack it up */
+		data->running = false;
 		return -1;
 	}
+	/* All subsystems have initialized ok */
+	data->ready = true;
 
 	/* ------------------------------------------------------
-	 * Print loop, 10 Hz
+	 * Print loop, 4 Hz
 	 */
 	while (1) {
 		k_sleep(K_MSEC(250));

@@ -67,7 +67,7 @@ void accel_collector(void)
 		k_sleep(K_SECONDS(1));
 	} while (!valid);
 
-	while (valid && _data != NULL) {
+	while (valid && data_valid(_data)) {
 		k_sem_take(&sem_a, K_FOREVER);
 		uint64_t ts = gptp_ts();
 		if (data_get(_data) == 0) {
