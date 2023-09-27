@@ -256,53 +256,57 @@ int network_init(struct avb_sensor_data *sensor_data,
 {
 	if (!sensor_data)
 		return -EINVAL;
+
 	memset(&ninfo, 0, sizeof(ninfo));
-	ninfo.data = sensor_data;
-
-	/* FIXME Use these values (alongsize tx_interval) to find the
-	 * correct idleSlope
-	 */
-	ninfo.portTxRate = 100000000; /* bps */
-
-	/* Find total size, including headers and L1 overhead */
-	int frame_sz = (PDU_SIZE + L2_SZ + VLAN_SZ + L1_SZ)*8;
-	int frames_sec = 1e9/tx_interval_ns;
-
-	printf("Send %zd octets (%d bytes) %d times/sec\n", frame_sz, frame_sz / 8, frames_sec);
-
-	/* refill bps */
-	ninfo.idleSlope =  frame_sz * frames_sec;
-	printf("  idleSlope=%d\n", ninfo.idleSlope);
-
-	ninfo.maxFrameSize = frame_sz;
-	printf("  maxFrameSize=%d\n", ninfo.maxFrameSize);
-
-
-	ninfo.sendSlope = ninfo.idleSlope - ninfo.portTxRate;
-	printf("  sendSlope=%d\n", ninfo.sendSlope);
-
-	ninfo.loCredit = ninfo.maxFrameSize * ninfo.sendSlope / ninfo.portTxRate;
-	printf("  loCredit=%d\n", ninfo.loCredit);
-
-
-#if 0
-	int portTransmitRate = 100000000;	//bits per second on port
-	int idleSlope = 1920;			//bits per second used by avtp
-	int sendSlope = idleSlope - portTransmitRate;
-	bool transmit = false;
-#endif
-
-
 
 	/* 1. Find port rate (portTransmitRate) and max MTU*/
-	net_if_foreach(gather_net_info, &ninfo);
+	// net_if_foreach(gather_net_info, &ninfo);
+	ninfo.portTxRate = 100000000;
+	ninfo.max_mtu = 1500;
 
-	/* Find idleSlope based on tx_interval and portTxRate */
-	/* 2. Determine total size pr. frame */
-	/* 3. Derive required idleSlope */
-	/* 4.  */
+	ninfo.data = sensor_data;
+	ninfo.tx_interval_ns = tx_interval_ns;
 
-	/* Init network */
+	ninfo.sc = sc;
+	ninfo.maxFrameSize = (PDU_SIZE + L2_SZ + VLAN_SZ + L1_SZ)*8;
+
+	/* idleSlope is the rate of refill and is the total size * observation interval.
+	 *
+	 * The idea being that a stream should send with /at least/ that rate.
+	 *
+	 * There's nothing wrong by using expected Tx rate instead of
+	 * observation interval per. se, but this will interfere with
+	 * the transmission guarantees for other streams. Idle slope is
+	 * what gives the upper limit of frame sizes.
+	 *
+	 * However, as a means for refilling credits in a small system
+	 * running in /software/ this approach is competely bonkers.
+	 *
+	 * The "correct" approach would be to take each dataset and
+	 * split it into tx_interval_ns / observation_interval. With our
+	 * PDU size of 104 bytes, this would lead to 1-2 bytes of
+	 * payload *per* frame which is rather ridiculous.
+	 *
+	 * So we cheat. As long as sensor_data is < max MTU, we send
+	 * everything in a single frame and refill credits based on
+	 * tx_interval.
+	 */
+	ninfo.idleSlope = ninfo.maxFrameSize * ((double)1e9 / ninfo.tx_interval_ns);
+	ninfo.sendSlope = ninfo.idleSlope - ninfo.portTxRate;
+
+	/* Need to do jump through some hoops to avoid integer overflow */
+	ninfo.loCredit = ((int64_t)ninfo.maxFrameSize * ninfo.sendSlope) / ninfo.portTxRate;
+	ninfo.hiCredit = ((int64_t)ninfo.max_mtu * 8  * (ninfo.idleSlope) / ninfo.portTxRate);
+
+	printf("Network CBS settings\n");
+	printf("  portTxRate          = %10"PRIu64" bps\n", ninfo.portTxRate);
+	printf("  idleSlope           = %10"PRId64" bps\n", ninfo.idleSlope);
+	printf("  sendSlope           = %10"PRId64" bps\n", ninfo.sendSlope);
+	printf("  loCredit            = %10"PRId64" bits\n", ninfo.loCredit);
+	printf("  hiCredit            = %10"PRId64" bits\n", ninfo.hiCredit);
+	printf("  maxFrameSize        = %10d bits\n", ninfo.maxFrameSize);
+	printf("  maxInterferenceSize = %10d bytes\n", ninfo.max_mtu);
+
 	return 0;
 }
 
