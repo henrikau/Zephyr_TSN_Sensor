@@ -45,6 +45,7 @@ struct net_info {
 	struct avb_sensor_data *data;
 };
 static struct net_info ninfo = {0};
+static bool valid = false;
 
 
 /* cbs_can_tx
@@ -307,6 +308,7 @@ int network_init(struct avb_sensor_data *sensor_data,
 	printf("  maxFrameSize        = %10d bits\n", ninfo.maxFrameSize);
 	printf("  maxInterferenceSize = %10d bytes\n", ninfo.max_mtu);
 
+	valid = true;
 	return 0;
 }
 
@@ -334,6 +336,13 @@ void network_sender(void)
 	struct avtp_stream_pdu *pdu = alloca(PDU_SIZE);
 	avtp_stream_pdu_init(pdu);
 	char drain_buffer[1500];
+
+	/* we do not know when network has been initialized, so wait
+	 * until network_init() has completed.
+	 */
+	while (!valid) {
+		k_sleep(K_SECONDS(1));
+	}
 
 	while (1) {
 		/* 1. Block until we have 0 or positive credit */
