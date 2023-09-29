@@ -83,6 +83,11 @@ void cbs_timeout(struct k_timer *timer_id) {
  */
 void network_cbs_refill(void)
 {
+	/* Wait for network_init() to be called, i.e. setting ->data */
+	do {
+		k_sleep(K_MSEC(100));
+	} while (ninfo.data == NULL);
+
 	/*
 	 * Run periodically at X Hz (find this in .1BA/.1Q#L
 	 * FIXME: add a timer (prematurely) stopped callback
@@ -121,9 +126,8 @@ void network_cbs_refill(void)
 		 */
 		uint64_t dt_ns = ts_now - ts_prev;
 		int64_t d_credits = (ninfo.idleSlope * dt_ns) / 1e9;
-
 		/* If we're below, we increment regardless of queue */
-		if (ninfo.credit < 0)
+		if (ninfo.credit < 0 || ninfo.queue > 0)
 			ninfo.credit += d_credits;
 
 		/* 2. notify waiters */
