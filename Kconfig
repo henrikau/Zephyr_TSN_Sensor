@@ -1,0 +1,16 @@
+# AVB Sensor Node for K64F w/AGM01 shield
+
+# Copyright (c) 2023 SINTEF Digital
+# SPDX-License-Identifier: Apache-2.0
+
+mainmenu "AVB Sensor Node configuration"
+
+config NET_VLAN_TAG_AVB
+	int "Virtrual LAN tag used for AVB sensor traffic"
+	default 100
+	range 0 4094
+	depends on NET_VLAN
+	help
+	  Set virtual LAN tag (id) that is used for AVB/TSN sensor traffic.
+
+source "Kconfig.zephyr"

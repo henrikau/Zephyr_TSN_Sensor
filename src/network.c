@@ -269,6 +269,19 @@ int network_init(struct avb_sensor_data *sensor_data,
 
 	memset(&ninfo, 0, sizeof(ninfo));
 
+	struct net_if *iface = net_if_get_first_by_type(&NET_L2_GET_NAME(ETHERNET));
+	if (!iface) {
+		printf("Failed getting interface, cannot continue\n");
+		return -EINVAL;
+	}
+
+	int ret = net_eth_vlan_enable(iface, CONFIG_NET_VLAN_TAG_AVB);
+	if (ret < 0) {
+		printf("Failed activating VLAN:%d (%d)",
+			CONFIG_NET_VLAN_TAG_AVB, ret);
+		return -EINVAL;
+	}
+
 	/* 1. Find port rate (portTransmitRate) and max MTU*/
 	// net_if_foreach(gather_net_info, &ninfo);
 	ninfo.portTxRate = 100000000;
