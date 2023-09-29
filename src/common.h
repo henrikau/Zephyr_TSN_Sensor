@@ -2,6 +2,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/sensor.h>
 enum avb_stream_class {
+	CLASS_NONE = 0,		/* do not use PCP and VLAN */
 	CLASS_A = 8000,		/* 125us - 8kHz */
 	CLASS_B = 4000		/* 250us - 4kHz */
 };

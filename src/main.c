@@ -43,7 +43,7 @@ int main(void)
 	 *
 	 * accel reads data at 100Hz (10ms)
 	 */
-	if (network_init(data, 10*NSEC_PER_MSEC, CLASS_A) != 0) {
+	if (network_init(data, 10*NSEC_PER_MSEC, CLASS_NONE) != 0) {
 		printf("Failed starting network\n");
 		startup_err = true;
 	}

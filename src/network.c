@@ -91,8 +91,10 @@ void network_cbs_refill(void)
 	 */
 	k_timer_init(&cbs_timer, cbs_timeout, NULL);
 
-	/* As a start, refil at 100Hz */
-	k_timer_start(&cbs_timer, K_USEC(250), K_USEC(10000));
+	/* Refill with 100Hz, try to avoid too high overhead whilst
+	 * testing and debugging.
+	 */
+	k_timer_start(&cbs_timer, K_USEC(0), K_USEC(10000));
 
 	uint64_t ts_prev = gptp_ts();
 	while (1) {
@@ -275,17 +277,52 @@ int network_init(struct avb_sensor_data *sensor_data,
 		return -EINVAL;
 	}
 
-	int ret = net_eth_vlan_enable(iface, CONFIG_NET_VLAN_TAG_AVB);
-	if (ret < 0) {
-		printf("Failed activating VLAN:%d (%d)",
-			CONFIG_NET_VLAN_TAG_AVB, ret);
-		return -EINVAL;
+	/* If we're using an explicit stream-class, create a vlan and
+	 * create the context to go with it.
+	 */
+	if (sc != CLASS_NONE) {
+		int ret = net_eth_vlan_enable(iface, CONFIG_NET_VLAN_TAG_AVB);
+		if (ret < 0) {
+			printf("Failed activating VLAN:%d (%d)",
+				CONFIG_NET_VLAN_TAG_AVB, ret);
+			return -EINVAL;
+		}
+		ret = net_context_get(AF_PACKET, SOCK_DGRAM, IPPROTO_RAW, &ninfo.avb_ctx);
+		if (ret != 0) {
+			printf("Failed getting context for outgoing frames\n");
+			return -EINVAL;
+		}
+
+		struct sockaddr_ll addr = {
+			.sll_family = AF_PACKET,
+			.sll_protocol = htons(0x22f0),
+			.sll_ifindex = 1,
+			.sll_halen = 6,
+		};
+		ret = net_context_bind(ninfo.avb_ctx,
+				(struct sockaddr *)&addr,
+				sizeof(struct sockaddr_ll));
+		if (ret < 0) {
+			printf("Failed binding to context (%d)\n", ret);
+			return -EINVAL;
+		}
+
+		/* From 802.1BA and friends
+		 * (Unless otherwise configured by a network-admin)
+		 */
+		uint8_t prio = sc == CLASS_A ? 3 : 2;
+		ret = net_context_set_option(ninfo.avb_ctx,
+					NET_OPT_PRIORITY,
+					&prio, sizeof(prio));
+		if (ret < 0) {
+			printf("Faield setting prio (%u) for context, %d\n", prio, ret);
+			return -EINVAL;
+		}
 	}
 
 	/* 1. Find port rate (portTransmitRate) and max MTU*/
-	// net_if_foreach(gather_net_info, &ninfo);
 	ninfo.portTxRate = 100000000;
-	ninfo.max_mtu = 1500;
+	ninfo.max_mtu = iface->if_dev->mtu;
 
 	ninfo.data = sensor_data;
 	ninfo.tx_interval_ns = tx_interval_ns;
@@ -334,6 +371,14 @@ int network_init(struct avb_sensor_data *sensor_data,
 	return 0;
 }
 
+void avb_tx_callback(struct net_context *ctx, int status, void *data)
+{
+	struct net_info *n = (struct net_info *)data;
+	if (ctx == n->avb_ctx) {
+		cbs_credit_put(status > 0 ? status : 0);
+	}
+}
+
 void network_sender(void)
 {
 	/* Wait for network_init() to be called, i.e. setting ->data */
@@ -342,6 +387,12 @@ void network_sender(void)
 	} while (ninfo.data == NULL);
 
 	uint8_t seq_num = 0;
+
+	/*
+	 * Regardless of context and stream-classes, weneed a convenient
+	 * way of draining the receive buffer since gPTP opens the NIC
+	 * in promiscous mode.
+	 */
 	int avb_socket = zsock_socket(AF_PACKET, SOCK_DGRAM, 0x22f0);
 	if (avb_socket < 0) {
 		printf("[NETWORK] Cannot create socket (%d), aborting\n", avb_socket);
@@ -392,8 +443,22 @@ void network_sender(void)
 
 			/* 4. Transmit data  */
 			((struct sensor_set *)pdu->avtp_payload)->sent_ts_ns = gptp_ts();
-			zsock_sendto(avb_socket, pdu, PDU_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
-			seq_num++;
+			if (ninfo.sc == CLASS_NONE) {
+				zsock_sendto(avb_socket, pdu, PDU_SIZE, 0, (struct sockaddr *)&addr, sizeof(addr));
+				cbs_credit_put(sz > 0 ? sz : 0);
+			} else {
+				int ret = net_context_sendto(ninfo.avb_ctx,
+							pdu,
+							PDU_SIZE,
+							(struct sockaddr *)&addr,
+							sizeof(addr),
+							(net_context_send_cb_t)avb_tx_callback, K_NO_WAIT, (void *)&ninfo);
+				// cbs_credit_puts() freed in callback
+				if (ret < 0) {
+					printf("Failed sending data using context, res=%d, stopping.\n", ret);
+					ninfo.data->running = false;
+				}
+			}
 
 			/* Rip out multiple messages quickly.
 			 *
@@ -411,12 +476,9 @@ void network_sender(void)
 			do {
 				res = recv(avb_socket, drain_buffer, sizeof(drain_buffer), MSG_DONTWAIT);
 			} while (res > 0);
+
+			seq_num++;
 		}
 
-		/* 5. Signal CBS thread that  data has been consumed (or
-		 * nothing if sending failed.
-		 */
-		cbs_credit_put(sz > 0 ? sz : 0);
 	}
-	printf("[NETWORK] Closing down sender.\n");
 }
