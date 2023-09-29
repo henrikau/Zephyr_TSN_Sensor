@@ -24,19 +24,23 @@ struct net_info {
 	/* iface related fields
 	 */
 	int max_mtu;
-	uint64_t portTxRate;
 	int queue;
-	int credit;
 
 	/* CBS Settings */
 	enum avb_stream_class sc;
+	uint64_t portTxRate;
 	int64_t idleSlope;
 	int64_t sendSlope;
+
+	int credit;
 	int maxFrameSize;
-	int64_t loCredit;
-	int64_t hiCredit;
+	int loCredit;
+	int hiCredit;
 	uint64_t tx_interval_ns;
 
+
+	/* Tx Priority */
+	struct net_context *avb_ctx;
 	/*
 	 * Reference to sensor data. The collector-threads will feed data into
 	 * this whenever their sensor is ready. When we can transmit, we reserve
@@ -45,7 +49,6 @@ struct net_info {
 	struct avb_sensor_data *data;
 };
 static struct net_info ninfo = {0};
-static bool valid = false;
 
 
 /* cbs_can_tx
@@ -153,7 +156,6 @@ void network_cbs_refill(void)
 int cbs_credit_get(void)
 {
 	if (k_sem_take(&cbs_credit_lock, K_FOREVER) == 0) {
-		/* FIXME: we increment queue, but we need to know the time at wich */
 		ninfo.queue++;
 		k_sem_give(&cbs_credit_lock);
 		return k_sem_take(&cbs_can_tx, K_FOREVER);
@@ -362,12 +364,11 @@ int network_init(struct avb_sensor_data *sensor_data,
 	printf("  portTxRate          = %10"PRIu64" bps\n", ninfo.portTxRate);
 	printf("  idleSlope           = %10"PRId64" bps\n", ninfo.idleSlope);
 	printf("  sendSlope           = %10"PRId64" bps\n", ninfo.sendSlope);
-	printf("  loCredit            = %10"PRId64" bits\n", ninfo.loCredit);
-	printf("  hiCredit            = %10"PRId64" bits\n", ninfo.hiCredit);
+	printf("  loCredit            = %10d bits\n", ninfo.loCredit);
+	printf("  hiCredit            = %10d bits\n", ninfo.hiCredit);
 	printf("  maxFrameSize        = %10d bits\n", ninfo.maxFrameSize);
 	printf("  maxInterferenceSize = %10d bytes\n", ninfo.max_mtu);
 
-	valid = true;
 	return 0;
 }
 
@@ -400,7 +401,6 @@ void network_sender(void)
 	}
 
 	/* Set destination */
-	// const unsigned char ether_broadcast_addr[]={0x00,0x1b,0x21,0xe4,0x67,0x07};
 	const unsigned char ether_mcast_addr[] = {0x01, 0x00, 0x5E, 0x01, 0x11, 0x42};
 
 	struct sockaddr_ll addr;
