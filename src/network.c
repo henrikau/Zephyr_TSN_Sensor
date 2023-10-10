@@ -29,9 +29,21 @@ struct net_info {
 	/* CBS Settings */
 	enum avb_stream_class sc;
 	uint64_t portTxRate;
+
+	/* Refill-rate, bits/sec */
 	int64_t idleSlope;
+
+	/* timer period for refill task */
+	int64_t idleSlope_period_ns;
+	int idleSlope_rate;
+	int idleSlope_refill;
+
+	/* each timer period refill amount */
+	int64_t idleSlope_period;
+
 	int64_t sendSlope;
 
+	/* Credits (in bits) */
 	int credit;
 	int maxFrameSize;
 	int loCredit;
@@ -102,11 +114,13 @@ void network_cbs_refill(void)
 	/* Refill with 100Hz, try to avoid too high overhead whilst
 	 * testing and debugging.
 	 */
-	k_timer_start(&cbs_timer, K_USEC(0), K_USEC(10000));
+	printf("Running refill-task every %u usec\n", (int)(ninfo.idleSlope_period_ns / 1e3));
+	k_timer_start(&cbs_timer, K_USEC(0), K_USEC((int)(ninfo.idleSlope_period_ns / 1e3)));
 
-	uint64_t ts_prev = gptp_ts();
 	while (1) {
-		/* 1. Replenish credit, adjust for timer being late
+		k_sem_take(&cbs_credit_lock, K_FOREVER);
+
+		/* 1. Replenish credit
 		 *
 		 * In 802.1Q, idleSlope is used to describe the rate of
 		 * replensihing credits for a particular Stream
@@ -115,20 +129,18 @@ void network_cbs_refill(void)
 		 *
 		 * This does not scale particularly well to a SW-only
 		 * approach, so we need network_init() to have
-		 * calculated idleSlope appropriately.
+		 * calculated idleSlope and _rate appropriately.
 		 */
-		k_sem_take(&cbs_credit_lock, K_FOREVER);
-		uint64_t ts_now = gptp_ts();
 
-		/* Given the rate of refill (idleSlope), refill
-		 * according to time spent since last refill. This
-		 * should scale regardless of cbs_timer
-		 */
-		uint64_t dt_ns = ts_now - ts_prev;
-		int64_t d_credits = (ninfo.idleSlope * dt_ns) / 1e9;
-		/* If we're below, we increment regardless of queue */
-		if (ninfo.credit < 0 || ninfo.queue > 0)
-			ninfo.credit += d_credits;
+		/* If we're below, we increment regardless of queue. */
+		if (ninfo.credit < 0) {
+			ninfo.credit += ninfo.idleSlope_refill;
+		} else if (ninfo.queue > 0) {
+			/* queued and credit was > 0, so increment, but cap at hiCredit */
+			ninfo.credit += ninfo.idleSlope_refill;
+			if (ninfo.credit > ninfo.hiCredit)
+				ninfo.credit = ninfo.hiCredit;
+		}
 
 		/* 2. notify waiters */
 		if(ninfo.credit >= 0) {
@@ -139,8 +151,6 @@ void network_cbs_refill(void)
 				ninfo.credit = 0;
 			}
 		}
-
-		ts_prev = ts_now;
 		k_sem_give(&cbs_credit_lock);
 
 		/* 3. Wait for timer and goto #1*/
@@ -169,6 +179,8 @@ int cbs_credit_get(void)
 
 /* Decrement the credit with the consumed size of the transmitted
  * data. The functino will also release the 'credit-lock'
+ *
+ * Size in bytes
  */
 int cbs_credit_put(int payload_sz)
 {
@@ -360,9 +372,25 @@ int network_init(struct avb_sensor_data *sensor_data,
 	ninfo.idleSlope = ninfo.maxFrameSize * ((double)1e9 / ninfo.tx_interval_ns);
 	ninfo.sendSlope = ninfo.idleSlope - ninfo.portTxRate;
 
+	/* We implement CBS in SW, so use a timer with a known period and scale refill to this period.
+	 *
+	 * Note: we do not know the /exact/ time between two timers
+	 * fire, but it should be a periodic timer, so over time it
+	 * should be correct.
+	 */
+	ninfo.idleSlope_period_ns = 1 * NSEC_PER_MSEC; /* 200Hz */
+	ninfo.idleSlope_rate = 1000000000L / ninfo.idleSlope_period_ns;
+	if (ninfo.idleSlope % ninfo.idleSlope_rate) {
+		printf("WARNING! We have fractional idleSlope rate!\n");
+		printf("Filling every round: %llu\n",  ninfo.idleSlope / ninfo.idleSlope_rate);
+		printf("Remainder: %f\n", (double)(ninfo.idleSlope % ninfo.idleSlope_rate)/ninfo.idleSlope_rate);
+	}
+	ninfo.idleSlope_refill = ninfo.idleSlope / ninfo.idleSlope_rate;
+
+
 	/* Need to do jump through some hoops to avoid integer overflow */
-	ninfo.loCredit = ((int64_t)ninfo.maxFrameSize * ninfo.sendSlope) / ninfo.portTxRate;
-	ninfo.hiCredit = ((int64_t)ninfo.max_mtu * 8  * (ninfo.idleSlope) / ninfo.portTxRate);
+	ninfo.loCredit = ((int64_t)ninfo.maxFrameSize * ninfo.sendSlope) / (int64_t)ninfo.portTxRate;
+	ninfo.hiCredit = ((int64_t)ninfo.max_mtu * 8  * (ninfo.idleSlope) / (int64_t)ninfo.portTxRate);
 
 	printf("Network CBS settings\n");
 	printf("  portTxRate          = %10"PRIu64" bps\n", ninfo.portTxRate);
@@ -372,7 +400,10 @@ int network_init(struct avb_sensor_data *sensor_data,
 	printf("  hiCredit            = %10d bits\n", ninfo.hiCredit);
 	printf("  maxFrameSize        = %10d bits\n", ninfo.maxFrameSize);
 	printf("  maxInterferenceSize = %10d bytes\n", ninfo.max_mtu);
-
+	printf("Driver settings:\n");
+	printf("  refillPeriod        = %13.2f us\n", ninfo.idleSlope_period_ns/1e3);
+	printf("  refillRate          = %10d refills/sec\n", ninfo.idleSlope_rate);
+	printf("  refillAmount        = %10d bits/round\n", ninfo.idleSlope_refill);
 	return 0;
 }
 
