@@ -26,7 +26,13 @@ struct net_info {
 	int max_mtu;
 	int queue;
 
-	/* CBS Settings */
+	/* Complete streamid, including host MAC address */
+	union {
+		uint64_t u64;
+		unsigned char u8[8];
+	} stream_id;
+
+	/* CB Settings */
 	enum avb_stream_class sc;
 	uint64_t portTxRate;
 
@@ -294,7 +300,20 @@ int network_init(struct avb_sensor_data *sensor_data,
 		printf("Failed getting interface, cannot continue\n");
 		return -EINVAL;
 	}
+	/* Get capabilities, FIXME: verify PTP */
+	enum ethernet_hw_caps caps = net_eth_get_hw_capabilities(iface);
+	printf("HW Ethernet capabilities: %08x\n", caps);
 
+	struct net_linkaddr *link_addr = net_if_get_link_addr(iface);
+	printf("Link_addr length=%d, type=%d MAC=", link_addr->len, link_addr->type);
+	for (int i = 0; i<link_addr->len; i++) {
+		ninfo.stream_id.u8[i] = link_addr->addr[i];
+		printf("%02x:", link_addr->addr[i]);
+	}
+	printf("\n");
+	ninfo.stream_id.u8[6] = (STREAM_ID >> 8) & 0xFF;
+	ninfo.stream_id.u8[7] = STREAM_ID & 0xFF;
+	printf("StreamID: %016llu (0x%016llx) \n", ninfo.stream_id.u64, ninfo.stream_id.u64);
 	/* If we're using an explicit stream-class, create a vlan and
 	 * create the context to go with it.
 	 */
@@ -466,7 +485,7 @@ void network_sender(void)
 		if (sz == DATA_LEN) {
 
 			/* 3. Construct rest of PDU */
-			avtp_stream_pdu_set(pdu, AVTP_STREAM_FIELD_STREAM_ID, STREAM_ID);
+			avtp_stream_pdu_set(pdu, AVTP_STREAM_FIELD_STREAM_ID, ninfo.stream_id.u64);
 			avtp_stream_pdu_set(pdu, AVTP_STREAM_FIELD_STREAM_DATA_LEN, sz);
 			avtp_stream_pdu_set(pdu, AVTP_STREAM_FIELD_SEQ_NUM, seq_num);
 
