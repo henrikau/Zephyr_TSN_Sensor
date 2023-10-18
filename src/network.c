@@ -266,11 +266,6 @@ int pdu_add_data(struct avb_sensor_data *data, struct avtp_stream_pdu *pdu)
 		set->gyro_ts_ns = data->gyro_ts;
 		set->accel_ts_ns = data->accel_ts;
 
-		/* Avoid sending data more than once (essential part of
-		 * a time-triggered architecture)
-		 */
-		clear_data(data);
-
 		data_put(data);
 		return sizeof(*set);
 	}

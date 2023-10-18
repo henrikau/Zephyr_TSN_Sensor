@@ -35,7 +35,7 @@ int accel_init(struct avb_sensor_data *sensor_data)
 
 	/* Run sensor at 100Hz (commented out: 6 Hz  */
 	struct sensor_value attr_a = {
-		.val1 = 200, // 6
+		.val1 = 100, // 6
 		.val2 = 0,   // 250000
 	};
 
