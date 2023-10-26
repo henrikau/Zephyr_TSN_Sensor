@@ -392,7 +392,7 @@ int network_init(struct avb_sensor_data *sensor_data,
 	 * fire, but it should be a periodic timer, so over time it
 	 * should be correct.
 	 */
-	ninfo.idleSlope_period_ns = 1 * NSEC_PER_MSEC; /* 200Hz */
+	ninfo.idleSlope_period_ns = 1000 * NSEC_PER_USEC;
 	ninfo.idleSlope_rate = 1000000000L / ninfo.idleSlope_period_ns;
 	if (ninfo.idleSlope % ninfo.idleSlope_rate) {
 		printf("WARNING! We have fractional idleSlope rate!\n");

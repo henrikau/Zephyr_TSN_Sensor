@@ -96,7 +96,7 @@ int main(void)
 	return 0;
 }
 
-K_THREAD_DEFINE(GYRO_COLLECTOR,  1024, gyro_collector    , NULL, NULL, NULL, 5, 0, 0);
-K_THREAD_DEFINE(ACCEL_COLLECTOR, 1024, accel_collector   , NULL, NULL, NULL, 6, 0, 0);
-K_THREAD_DEFINE(NETWORK_SENDER,  1024, network_sender    , NULL, NULL, NULL, 7, 0, 0);
-K_THREAD_DEFINE(CBS_REFILLER,    2048, network_cbs_refill, NULL, NULL, NULL, 4, 0, 0);
+K_THREAD_DEFINE(GYRO_COLLECTOR,  1024, gyro_collector    , NULL, NULL, NULL, 3, 0, 0);
+K_THREAD_DEFINE(ACCEL_COLLECTOR, 1024, accel_collector   , NULL, NULL, NULL, 2, 0, 0);
+K_THREAD_DEFINE(NETWORK_SENDER,  1024, network_sender    , NULL, NULL, NULL, 1, 0, 0);
+K_THREAD_DEFINE(CBS_REFILLER,    2048, network_cbs_refill, NULL, NULL, NULL, 0, 0, 0);
